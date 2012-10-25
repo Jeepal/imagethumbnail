@@ -1,0 +1,7 @@
+name = ImageCacheThumbnail
+description = "生成缩略图模块."
+package = ImageCache
+core = 6.x
+version = VERSION
+dependencies[] = imagecache
+dependencies[] = imageapi_gd

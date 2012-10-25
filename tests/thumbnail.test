@@ -1,0 +1,80 @@
+<?php
+/**
+ * 檢查保存圖像的設置項后，數據是否保存進數據表
+ * 檢查圖片設置響應的規格后，是否生成了響應規格的圖片，注意不要出現hard code,測試圖片使用imagecache默認的test圖片，不要自己上傳圖片
+ * 檢查image_thumbnail 的cache是否設置成功
+ * 
+ */
+class ThumbnailTestCase extends DrupalWebTestCase {
+
+  /**
+   * UserExternal unittest info.
+   *
+   * @return array
+   *   testcase info
+   */
+   public static function getinfo(){
+     return array(
+	'name' => t('ImageCache Thumbnail'),
+	'description' => t('Test ImageCache Thumbnail(image_thumbnail_save && set_thumbnail_cache && imagecache_generate_rewrite)'),
+	'group' => t('ImageCacheThumbnail'),
+     );
+   }
+
+   public function setUp(){
+     // Enable any modules required for the test.
+     parent::setUp('thumbnail', 'ImageCache', 'imageapi_gd');
+     $_GET['unitest'] = 1;
+   }
+   
+   /*
+    * test method: image_thumbnail_save
+   */
+   public function testImageThumbnailSave(){
+   	$group = 'Image Thumbnail Save';
+    $values = array('file_path'=>'images/playlist','presets'=>array('124x124','165x165','35x35'));
+    $image_path = $values['file_path'];
+    cache_clear_all('imagecache:thumbnail/'.$image_path, 'cache');
+   	image_thumbnail_save($values);
+   	$thumbnail_size = get_image_thumbnail($values['file_path']);
+   	//判断是否在数组中
+   	foreach($values['presets'] as $presetname){
+	   	$message = t('Method image_thumbnail_save is ok, preset is @presetname!',array('@presetname' => $presetname));
+   		$this->assertTrue(in_array($presetname,$thumbnail_size), $message, $group); 
+   	}
+	
+   	// test method: set_thumbnail_cache
+   	$cache = cache_get('imagecache:thumbnail/'.$image_path, 'cache');
+   	$message = t('cache is exiset when imagepath is (imagepath = @imagepath).',array('@imagepath' => $image_path));
+   	$this->assertTrue((!empty($cache->data) && is_array($cache->data)), $message, $group);
+   }
+   
+   /*
+    *test method: imagecache_generate_rewrite
+   */
+   public function testImagecacheGenerateRewrite(){
+   $group = 'Imagecache Generate Rewrite';
+   $image_path_type = 'images/playlist';
+   
+   $file = drupal_get_path('module', 'thumbnail').'/imagecache_sample.png'; //sites/dev.jeepal.com/files
+   $filename = 'imagecache_sample.png';
+   $filepath = file_directory_path() . '/' . $image_path_type;
+   if (!is_dir($filepath)) {
+     mkdir($filepath, 0777, true);
+   }
+   file_copy($file, $filepath . '/' . $filename, FILE_EXISTS_REPLACE);
+   
+   $image_path_from = $filepath . '/' . $filename;
+   imagecache_generate_rewrite($image_path_from);
+   $thumbnail_size = get_image_thumbnail($image_path_type);
+   foreach ( $thumbnail_size as $preset )
+   {
+	   $file_path = file_directory_path() . '/imagecache/' . $preset . '/' . $image_path_type . '/' .$filename;
+	   //$this->verbose();
+	   $message = t('filepath is exist,file_path is @file_path',array('@file_path'=>$file_path));
+	   $message_size = t('filesize>0,filesize is @filesize',array('@filesize'=>$preset));
+	   $this->assertTrue(is_file($file_path), $message, $group);
+	   $this->assertTrue(filesize($file_path)>0, $message_size, $group);
+   }
+  }
+}

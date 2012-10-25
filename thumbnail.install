@@ -1,0 +1,42 @@
+<?php 
+/**
+ * Implementation of hook_install().
+ */
+function thumbnail_install() {
+	// Create tables.
+	drupal_install_schema('thumbnail');
+}
+
+/**
+ * Implementation of hook_uninstall().
+ */
+function thumbnail_uninstall() {
+	// Remove tables.
+	drupal_uninstall_schema('thumbnail');
+}
+
+/**
+ * Implements hook_schema().
+ */
+function thumbnail_schema()
+{
+	$schema = array ();
+	$schema['imagecache_thumbnail'] = array (
+			'description' => 'imagecache_thumbnail description.',
+			'fields' => array (
+					'image_path' => array (
+							'description' => 'Image path for a image thumbnail.',
+							'type' => 'varchar',
+							'length' => 255,
+							'not null' => TRUE
+					),
+					'thumbnail_size' => array (
+							'description' => 'Thumbnail size for a image thumbnail.',
+							'type' => 'varchar',
+							'length' => 255,
+							'not null' => TRUE
+					),
+			),
+	);
+	return $schema;
+}

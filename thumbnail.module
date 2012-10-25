@@ -1,0 +1,199 @@
+<?php
+/**
+ * thumbnail module
+ */
+
+function thumbnail_menu() {
+	$items = array();
+	//测试drush
+ 	$items['admin/build/test_drush_thumbnail'] = array ( 
+            'title' => 'Test Image Thumbnail', 
+            'page callback' => 'test_drush_thumbnail', 
+            'access arguments' => array (),
+    );
+	return $items;
+}
+
+//批量生成缩略图
+function test_drush_thumbnail() {
+  $result = db_query("SELECT filepath FROM {files}");
+  while ($file_path = db_fetch_array($result)) {
+  	$files[] = $file_path['filepath'];
+  } 
+  $presets = imagecache_presets();
+  if (!empty($files) && !empty($presets)) {
+    foreach ($files as $file) {
+      foreach ($presets as $presetname) {
+        imagecache_generate_image($presetname['presetname'], $file);
+        echo $file."<br>";
+      }
+    }
+  }
+}
+
+/**
+ * Implementation of hook_form_alter().
+ */
+function thumbnail_form_alter(&$form, $form_state, $form_id)
+{
+	if($form_id == 'content_field_edit_form'){
+		$options = array();
+		$thumbnail_size = get_image_thumbnail($form['#field']['widget']['file_path']);
+		foreach (imagecache_presets() as $preset) {
+			$options[$preset['presetname']] = $preset['presetname'];
+		}
+		$form['widget']['presets'] = array(
+				'#title' => 'Preset',
+				'#type' => 'checkboxes',
+				'#options' => $options,
+				'#description' => t('Select which imagecache presets will be effected'),
+				'#required' => TRUE,
+				'#default_value' => isset($thumbnail_size) ? $thumbnail_size : array(),
+		);
+		$form['#validate'][] = 'thumbnail_form_validate';
+		return $form;
+	}
+}
+
+function thumbnail_form_validate($form, &$form_state) {
+   //根据模块来存储相应的缩略图size
+   image_thumbnail_save($form_state['values']);
+}
+
+ /**
+ * Impenlition Hook_nodeapi.
+ * 取得node的信息,生成相应的缩略图
+ */
+ function thumbnail_nodeapi(&$node, $op, $a3 = NULL, $a4 = NULL) {
+	if($op == 'update' || $op == 'insert'){
+		//获取全部的image字段的名称
+		$file_names = get_file_names();
+		$node_file_names = array();
+		foreach ($file_names as $file_name) {
+			if(is_array($node->$file_name['field_name']) && !empty($node->$file_name['field_name'])){
+				$node_file_names = array_merge($node_file_names,$node->$file_name['field_name']);
+			}
+		}
+		foreach($node_file_names as $field){
+			if(isset($field['filepath']) && isset($field['filename'])){
+				imagecache_generate_rewrite($field['filepath']);
+			}
+		}
+	} 
+ }
+ 
+ /*implement hook checkpreset_hook 
+  * drush时塞选符合的{size}
+  * */
+ function thumbnail_checkpreset($presetname,$filepath,$preset){
+ 	//$args = func_get_args();
+ 	$file_path = explode('/',str_replace(file_directory_path() . '/', '', $filepath));
+ 	$image_path = $file_path[0].'/'.$file_path[1];
+ 	$thumbnail_size = get_image_thumbnail($image_path);
+ 	//判断presetname是否在数组中
+ 	if(!in_array($presetname,$thumbnail_size)){
+ 		$preset['presetname'] = false;
+ 	}
+ 	return $preset;
+ }
+ 
+/*缩略图生成
+ * image_path 要生成缩略图图片的路径
+*/
+function imagecache_generate_rewrite(&$image_path)
+{
+    $path = str_replace(file_directory_path() . '/', '', $image_path);
+	$src = file_create_path($path);
+    $presets = imagecache_presets();
+    if (!empty($presets)) {
+    	foreach ($presets as $presetname) {
+    		imagecache_generate_image($presetname['presetname'], $src);
+    	}
+    }
+}
+
+//根据模块来存储相应的缩略图size
+function image_thumbnail_save($values){
+	$image_path = $values['file_path'];
+	if(!$image_path) return;
+	$presets = $values['presets'];
+	db_query("DELETE FROM imagecache_thumbnail WHERE image_path = '%s'", $image_path);
+	foreach($presets as $key=>$value){
+		if($value){
+			db_query("INSERT INTO imagecache_thumbnail (image_path, thumbnail_size) VALUES ('%s', '%s')", $image_path, $value);
+		}
+	}
+	//如果存在相应的cache则清除
+	if (($cache = cache_get('imagecache:thumbnail/'.$image_path, 'cache')) && is_array($cache->data)) {
+		$presets = array();
+		cache_clear_all('imagecache:thumbnail/'.$image_path, 'cache');
+
+		// Clear the content.module cache (refreshes the list of formatters provided by imagefield.module).
+		if (module_exists('content')) {
+			content_clear_type_cache();
+		}
+	}
+	//设置cache
+	set_thumbnail_cache($image_path);
+}
+
+//set thumbnail cache
+function set_thumbnail_cache($image_path){
+	$normal_presets = array();
+	if(!$image_path){
+		$result = db_query('SELECT * FROM imagecache_preset ORDER BY presetname');
+	}else{
+		$result = db_query("SELECT preset.* FROM imagecache_preset preset LEFT JOIN imagecache_thumbnail thumbnail ON thumbnail.thumbnail_size = preset.presetname WHERE thumbnail.image_path = '%s' ORDER BY presetname",$image_path);
+	}
+	while ($preset = db_fetch_array($result)) {		
+		$presets[$preset['presetid']] = $preset;
+		$presets[$preset['presetid']]['actions'] = imagecache_preset_actions($preset);
+		$presets[$preset['presetid']]['storage'] = IMAGECACHE_STORAGE_NORMAL;
+
+		// Collect normal preset names so we can skip defaults and mark overrides accordingly
+		$normal_presets[$preset['presetname']] = $preset['presetid'];
+	}
+
+	// Collect default presets and allow modules to modify them before they
+	// are cached.
+	$default_presets = module_invoke_all('imagecache_default_presets');
+	drupal_alter('imagecache_default_presets', $default_presets);
+	// Add in default presets if they don't conflict with any normal presets.
+	// Mark normal presets that take the same preset namespace as overrides.
+	foreach ($default_presets as $preset) {
+		if (!empty($preset['presetname'])) {
+			if (!isset($normal_presets[$preset['presetname']])) {
+				$preset['storage'] = IMAGECACHE_STORAGE_DEFAULT;
+				// Use a string preset identifier
+				$preset['presetid'] = $preset['presetname'];
+				$presets[$preset['presetname']] = $preset;
+			}
+			else {
+				$presetid = $normal_presets[$preset['presetname']];
+				$presets[$presetid]['storage'] = IMAGECACHE_STORAGE_OVERRIDE;
+			}
+		}
+	}
+
+	cache_set('imagecache:thumbnail/'.$image_path, $presets);
+
+	return $presets;
+}
+
+//获取模块相对应的缩略图size
+function get_image_thumbnail($image_path){
+	$result = db_query("SELECT * from imagecache_thumbnail WHERE image_path = '%s'",$image_path);
+	while ($image_thumbnail = db_fetch_array($result)) {
+		$thumbnail_size[] = $image_thumbnail['thumbnail_size'];
+	}
+	return $thumbnail_size;
+}
+
+//获取类型为image的字段
+function get_file_names(){
+	$result = db_query("SELECT field.field_name from content_node_field_instance field WHERE field.widget_type = 'imagefield_widget'");
+	while ($field_name = db_fetch_array($result)) {
+		$field_names[] = $field_name;
+	}
+	return $field_names;
+}
